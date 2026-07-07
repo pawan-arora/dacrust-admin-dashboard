@@ -30,10 +30,10 @@ import CalendarMonthIcon from "@mui/icons-material/CalendarMonth";
 
 import pizzaBg from "../assets/background_pizza.png";
 
-import LiveOperationsTab from "../components/LiveOperationsTab";
-import SalesAnalyticsTab from "../components/SalesAnalyticsTab";
-import MenuPerformanceTab from "../components/MenuPerformanceTab";
-import MenuManagementTab from "../components/MenuManagementTab";
+import LiveOperationsTab from "./tabs/LiveOperationsTab";
+import SalesAnalyticsTab from "./tabs/SalesAnalyticsTab";
+import MenuPerformanceTab from "./tabs/MenuPerformanceTab";
+import MenuManagementTab from "./tabs/MenuManagementTab";
 
 export default function SalesDashboard() {
   const [activeTab, setActiveTab] = useState(0);
