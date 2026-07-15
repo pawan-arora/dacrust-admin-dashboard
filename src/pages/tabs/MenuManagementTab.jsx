@@ -16,7 +16,7 @@ import {
 import AddIcon from "@mui/icons-material/Add";
 import EditIcon from "@mui/icons-material/Edit";
 import RestaurantMenuIcon from "@mui/icons-material/RestaurantMenu";
-import MenuItemModal from "../../components/MenuItemModal"; // Adjust path if needed
+import MenuItemModal from "../../components/MenuItemModal";
 import { collection, getDocs, doc, updateDoc } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../../firebase";
@@ -31,12 +31,16 @@ export default function MenuManagementTab() {
   const [editingItem, setEditingItem] = useState(null);
   const [uploadingImage, setUploadingImage] = useState(false);
 
+  // ✅ Expanded formData to support discounts and sizes
   const [formData, setFormData] = useState({
     name: "",
     description: "",
     price: "",
+    originalPrice: "",
     imagePath: "",
     isAvailable: true,
+    isDiscounted: false,
+    sizes: [],
   });
   const [imageFile, setImageFile] = useState(null);
 
@@ -70,15 +74,19 @@ export default function MenuManagementTab() {
     initializeMenu();
   }, [fetchMenuData]);
 
+  // ✅ Fixed handleOpenModal - proper type handling + more fields
   const handleOpenModal = (item = null) => {
     if (item) {
       setEditingItem(item);
       setFormData({
         name: item.name || "",
         description: item.description || "",
-        price: item.price || "",
+        price: item.price != null ? String(item.price) : "",
+        originalPrice: item.originalPrice != null ? String(item.originalPrice) : "",
         imagePath: item.imagePath || "",
         isAvailable: item.isAvailable ?? true,
+        isDiscounted: item.isDiscounted ?? false,
+        sizes: item.sizes || [],
       });
     } else {
       setEditingItem(null);
@@ -86,8 +94,11 @@ export default function MenuManagementTab() {
         name: "",
         description: "",
         price: "",
+        originalPrice: "",
         imagePath: "",
         isAvailable: true,
+        isDiscounted: false,
+        sizes: [],
       });
     }
     setImageFile(null);
@@ -105,6 +116,7 @@ export default function MenuManagementTab() {
     }
   };
 
+  // ✅ Improved save logic - respects size-based items and discounts
   const handleSaveItem = async () => {
     if (!formData.name) return;
 
@@ -119,17 +131,32 @@ export default function MenuManagementTab() {
         finalImageUrl = await getDownloadURL(storageRef);
       }
 
+      // Start with existing item data to preserve sizes, dishType, spiceLevels, etc.
       const newItemData = {
         ...editingItem,
         name: formData.name,
         description: formData.description,
-        price: Number(formData.price),
         imagePath: finalImageUrl,
         isAvailable: formData.isAvailable,
+        isDiscounted: formData.isDiscounted,
         menuId:
           editingItem?.menuId ||
           formData.name.toLowerCase().replace(/\s+/g, "_"),
       };
+
+      // Only set price if user entered a value (for simple items)
+      if (formData.price !== "") {
+        newItemData.price = Number(formData.price);
+      }
+      // If price field is empty, we keep whatever was there (sizes-based items)
+
+      // Handle originalPrice for discounted items
+      if (formData.originalPrice !== "") {
+        newItemData.originalPrice = Number(formData.originalPrice);
+      } else if (newItemData.originalPrice && !formData.isDiscounted) {
+        // Optional: remove originalPrice if discount is turned off
+        delete newItemData.originalPrice;
+      }
 
       const categoryDocRef = doc(db, "menu", selectedCategory.toLowerCase());
       const currentCategoryData = menuData[selectedCategory.toLowerCase()] || {
@@ -160,7 +187,7 @@ export default function MenuManagementTab() {
   const currentCategoryData =
     menuData[selectedCategory?.toLowerCase()]?.variants || [];
 
-  return (
+   return (
     <Box sx={{ flexGrow: 1, textAlign: "left" }}>
       
       {/* HEADER SECTION */}
@@ -524,6 +551,7 @@ export default function MenuManagementTab() {
         uploadingImage={uploadingImage}
         imageFile={imageFile}
         handleImageChange={handleImageChange}
+        selectedCategory={selectedCategory}
       />
     </Box>
   );

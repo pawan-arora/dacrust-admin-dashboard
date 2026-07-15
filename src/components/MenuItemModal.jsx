@@ -12,6 +12,7 @@ import {
   Typography,
   Button,
   Avatar,
+  Chip,
 } from "@mui/material";
 import CloudUploadIcon from "@mui/icons-material/CloudUpload";
 
@@ -25,20 +26,30 @@ export default function MenuItemModal({
   uploadingImage,
   imageFile,
   handleImageChange,
+  selectedCategory,
 }) {
+  const isAvailable = formData.isAvailable;
+
+  // Auto-disable Base Price for size-based categories (Pizza, etc.)
+  const sizeBasedCategories = ["pizza"];
+  const isSizeBasedCategory = sizeBasedCategories.includes(
+    selectedCategory?.toLowerCase()
+  );
+  const disableBasePrice =
+    isSizeBasedCategory || (formData.sizes && formData.sizes.length > 0);
+
   return (
     <Dialog
       open={open}
       onClose={onClose}
       maxWidth="sm"
       fullWidth
-      PaperProps={{
-        sx: { borderRadius: 3, p: 1 },
-      }}
+      PaperProps={{ sx: { borderRadius: 3, p: 1 } }}
     >
       <DialogTitle sx={{ fontWeight: 800, color: "#0f172a" }}>
         {editingItem ? "Edit Menu Item" : "Add New Item"}
       </DialogTitle>
+
       <DialogContent>
         <Box sx={{ display: "flex", flexDirection: "column", gap: 3, pt: 1 }}>
           <TextField
@@ -49,20 +60,65 @@ export default function MenuItemModal({
             InputProps={{ sx: { borderRadius: 2 } }}
           />
 
+          {/* Base Price - Auto disabled for Pizza / size-based items */}
           <TextField
             label="Base Price"
             type="number"
             fullWidth
+            disabled={disableBasePrice}
             InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">$</InputAdornment>
-              ),
+              startAdornment: <InputAdornment position="start">$</InputAdornment>,
               sx: { borderRadius: 2 },
             }}
             value={formData.price}
             onChange={(e) => setFormData({ ...formData, price: e.target.value })}
-            helperText="Leave blank if pricing is size-based (e.g. Pizza)"
+            helperText={
+              disableBasePrice
+                ? "This item uses size-based pricing (Small / Medium / Large)"
+                : "Leave blank for size-based items (e.g. Pizza)"
+            }
+            sx={{
+              "& .MuiOutlinedInput-root": {
+                bgcolor: disableBasePrice ? "#f8fafc" : "inherit",
+              },
+            }}
           />
+
+          {/* Discount Section */}
+          <Box sx={{ display: "flex", gap: 2, alignItems: "flex-start" }}>
+            <TextField
+              label="Original Price (if discounted)"
+              type="number"
+              fullWidth
+              InputProps={{
+                startAdornment: <InputAdornment position="start">$</InputAdornment>,
+                sx: { borderRadius: 2 },
+              }}
+              value={formData.originalPrice}
+              onChange={(e) =>
+                setFormData({ ...formData, originalPrice: e.target.value })
+              }
+              disabled={!formData.isDiscounted}
+            />
+
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={formData.isDiscounted}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      isDiscounted: e.target.checked,
+                      ...(!e.target.checked && { originalPrice: "" }),
+                    })
+                  }
+                  color="primary"
+                />
+              }
+              label="Discounted?"
+              sx={{ mt: 1, whiteSpace: "nowrap" }}
+            />
+          </Box>
 
           <TextField
             label="Description"
@@ -76,34 +132,67 @@ export default function MenuItemModal({
             InputProps={{ sx: { borderRadius: 2 } }}
           />
 
+          {/* Availability Section */}
           <Paper
             elevation={0}
             sx={{
-              p: 2,
-              border: "1px solid #e2e8f0",
+              p: 2.5,
               borderRadius: 2,
-              bgcolor: "#f8fafc",
+              border: "1px solid",
+              borderColor: isAvailable ? "#86efac" : "#fda4af",
+              bgcolor: isAvailable ? "#f0fdf4" : "#fef2f2",
+              transition: "all 0.2s ease-in-out",
             }}
           >
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                mb: 1,
+              }}
+            >
+              <Typography variant="body2" fontWeight="bold" color="#0f172a">
+                Availability Status
+              </Typography>
+
+              <Chip
+                label={isAvailable ? "Available" : "Unavailable"}
+                size="small"
+                color={isAvailable ? "success" : "error"}
+                sx={{
+                  fontWeight: 700,
+                  height: 24,
+                  fontSize: "0.75rem",
+                }}
+              />
+            </Box>
+
             <FormControlLabel
               control={
                 <Switch
-                  checked={formData.isAvailable}
+                  checked={isAvailable}
                   onChange={(e) =>
                     setFormData({ ...formData, isAvailable: e.target.checked })
                   }
-                  color="primary"
+                  color={isAvailable ? "success" : "error"}
                 />
               }
               label={
-                <Typography variant="body2" fontWeight="bold" color="#0f172a">
-                  Item Available for Ordering
+                <Typography
+                  variant="body2"
+                  fontWeight={600}
+                  color={isAvailable ? "#166534" : "#9f1239"}
+                >
+                  {isAvailable
+                    ? "Item is available for ordering"
+                    : "Item is currently unavailable"}
                 </Typography>
               }
             />
           </Paper>
 
-          {/* Image Upload Area */}
+          {/* ✅ FULL IMAGE UPLOAD SECTION (Fixes unused variable errors) */}
           <Box
             sx={{
               border: "2px dashed #cbd5e1",
@@ -138,6 +227,7 @@ export default function MenuItemModal({
                 Upload Image
               </Button>
             </label>
+
             {imageFile && (
               <Typography
                 variant="caption"
@@ -149,6 +239,7 @@ export default function MenuItemModal({
                 {imageFile.name} selected
               </Typography>
             )}
+
             {!imageFile && formData.imagePath && (
               <Box sx={{ mt: 3, display: "flex", justifyContent: "center" }}>
                 <Avatar
@@ -161,6 +252,7 @@ export default function MenuItemModal({
           </Box>
         </Box>
       </DialogContent>
+
       <DialogActions sx={{ p: 3, pt: 0 }}>
         <Button
           onClick={onClose}
