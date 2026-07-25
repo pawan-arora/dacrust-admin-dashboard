@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback} from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   collection,
   query,
@@ -7,6 +7,8 @@ import {
   doc,
   updateDoc,
   getDocs,
+  orderBy,
+  limit,
 } from "firebase/firestore";
 import { db } from "../firebase";
 import {
@@ -34,6 +36,7 @@ import LiveOperationsTab from "./tabs/LiveOperationsTab";
 import SalesAnalyticsTab from "./tabs/SalesAnalyticsTab";
 import MenuPerformanceTab from "./tabs/MenuPerformanceTab";
 import MenuManagementTab from "./tabs/MenuManagementTab";
+import { getNZDateString } from "../utils/dateUtils";
 
 export default function SalesDashboard() {
   const [activeTab, setActiveTab] = useState(0);
@@ -54,12 +57,17 @@ export default function SalesDashboard() {
   );
   const [topItemsLimit, setTopItemsLimit] = useState(5);
 
-  const [allOrders, setAllOrders] = useState([]);
+  // Analytics data (based on createdAt + selected period)
+  const [, setAllOrders] = useState([]);
   const [totalSales, setTotalSales] = useState(0);
   const [premiumCustomers, setPremiumCustomers] = useState([]);
   const [chartData, setChartData] = useState([]);
   const [topProducts, setTopProducts] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Live Kitchen data (based on scheduledTimeEpoch + selected period)
+  const [livePendingOrders, setLivePendingOrders] = useState([]);
+  const [liveCompletedOrders, setLiveCompletedOrders] = useState([]);
 
   const [scrollY, setScrollY] = useState(0);
 
@@ -79,8 +87,10 @@ export default function SalesDashboard() {
     fetchRestInfo();
   }, []);
 
- const fetchDashboardData = useCallback(() => {
-    // 1. Calculate the exact start and end times based on the chosen preset
+  // ==========================================
+  // ANALYTICS DATA (respects Reporting Period - based on createdAt)
+  // ==========================================
+  const fetchDashboardData = useCallback(() => {
     let start = new Date();
     let end = new Date();
 
@@ -103,7 +113,6 @@ export default function SalesDashboard() {
       end.setHours(23, 59, 59, 999);
     }
 
-    // 2. Build the query
     const ordersRef = collection(db, "orders");
     const q = query(
       ordersRef,
@@ -111,7 +120,6 @@ export default function SalesDashboard() {
       where("createdAt", "<=", end),
     );
 
-    // 3. Open a LIVE connection to Firebase (onSnapshot instead of getDocs)
     return onSnapshot(q, (snapshot) => {
       const fetchedOrders = [];
       let sum = 0;
@@ -123,18 +131,14 @@ export default function SalesDashboard() {
         const id = docSnapshot.id;
         const data = docSnapshot.data();
         fetchedOrders.push({ id, ...data });
-        console.log("Fetched Order:", { id, ...data });
+
         if (data.status === "PAID" || data.status === "COMPLETED") {
           const amount = data.totalAmount || 0;
-          sum += amount;
+          const dateStr = getNZDateString(data.scheduledTimeEpoch);
 
-          const dateObj = data.scheduledTimeEpoch
-            ? new Date(Number(data.scheduledTimeEpoch))
-            : new Date();
-          const dateStr = dateObj.toLocaleDateString("en-GB", {
-            day: "2-digit",
-            month: "short",
-          });
+          if (dateStr === "Unknown") return;
+
+          sum += amount;
           dailySalesMap[dateStr] = (dailySalesMap[dateStr] || 0) + amount;
 
           if (Array.isArray(data.items)) {
@@ -183,9 +187,82 @@ export default function SalesDashboard() {
         Object.values(customerMap).sort((a, b) => b.totalSpent - a.totalSpent),
       );
 
-      setLoading(false); 
+      setLoading(false);
     });
-  }, [datePreset, startDate, endDate]); 
+  }, [datePreset, startDate, endDate]);
+
+  // ==========================================
+  // LIVE KITCHEN QUEUE (based on EXPECTED date + selected period)
+  // ==========================================
+  useEffect(() => {
+    // Fetch a wider window so advance/past scheduled orders are available
+    const fromDate = new Date();
+    fromDate.setDate(fromDate.getDate() - 45);
+    fromDate.setHours(0, 0, 0, 0);
+
+    const ordersRef = collection(db, "orders");
+    const q = query(
+      ordersRef,
+      where("createdAt", ">=", fromDate),
+      orderBy("createdAt", "desc"),
+      limit(500)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      // Calculate the selected period range
+      let periodStart = new Date();
+      let periodEnd = new Date();
+
+      if (datePreset === "today") {
+        periodStart.setHours(0, 0, 0, 0);
+        periodEnd.setHours(23, 59, 59, 999);
+      } else if (datePreset === "yesterday") {
+        periodStart.setDate(periodStart.getDate() - 1);
+        periodStart.setHours(0, 0, 0, 0);
+        periodEnd.setDate(periodEnd.getDate() - 1);
+        periodEnd.setHours(23, 59, 59, 999);
+      } else if (datePreset === "7days") {
+        periodStart.setDate(periodStart.getDate() - 7);
+        periodStart.setHours(0, 0, 0, 0);
+        periodEnd.setHours(23, 59, 59, 999);
+      } else if (datePreset === "custom") {
+        periodStart = new Date(startDate);
+        periodStart.setHours(0, 0, 0, 0);
+        periodEnd = new Date(endDate);
+        periodEnd.setHours(23, 59, 59, 999);
+      }
+
+      const pending = [];
+      const completed = [];
+
+      snapshot.forEach((docSnapshot) => {
+        const order = { id: docSnapshot.id, ...docSnapshot.data() };
+
+        const scheduledEpoch = order.scheduledTimeEpoch;
+        if (!scheduledEpoch) return;
+
+        const scheduledDate = new Date(scheduledEpoch);
+
+        // Only include orders whose EXPECTED date falls inside the selected period
+        if (scheduledDate < periodStart || scheduledDate > periodEnd) return;
+
+        if (order.status === "PAID") {
+          pending.push(order);
+        } else if (order.status === "COMPLETED") {
+          completed.push(order);
+        }
+      });
+
+      // Sort by expected time
+      pending.sort((a, b) => (a.scheduledTimeEpoch || 0) - (b.scheduledTimeEpoch || 0));
+      completed.sort((a, b) => (b.scheduledTimeEpoch || 0) - (a.scheduledTimeEpoch || 0));
+
+      setLivePendingOrders(pending);
+      setLiveCompletedOrders(completed);
+    });
+
+    return () => unsubscribe();
+  }, [datePreset, startDate, endDate]);
 
   const handleMarkAsCompleted = async (orderId) => {
     try {
@@ -198,28 +275,20 @@ export default function SalesDashboard() {
     }
   };
 
-  // 2. Attach scroll listener for Sliver Parallax effect
+  // Scroll listener
   useEffect(() => {
     const handleScroll = () => setScrollY(window.scrollY);
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  // 3. THE LIVE DATA LISTENER (Completely Refactored)
+  // Analytics listener
   useEffect(() => {
     const unsubscribe = fetchDashboardData();
-
     return () => {
-      if (unsubscribe) {
-        unsubscribe();
-      }
+      if (unsubscribe) unsubscribe();
     };
   }, [fetchDashboardData]);
-
-  const pendingOrdersQueue = allOrders.filter((o) => o.status === "PAID");
-  const completedOrdersQueue = allOrders.filter(
-    (o) => o.status === "COMPLETED",
-  );
 
   const headerOpacity = Math.max(1 - scrollY / 150, 0);
   const parallaxOffset = scrollY * 0.4;
@@ -247,7 +316,6 @@ export default function SalesDashboard() {
           }}
         >
           <Toolbar disableGutters>
-            {/* Title Section */}
             <Box
               sx={{
                 flexGrow: 1,
@@ -282,7 +350,6 @@ export default function SalesDashboard() {
               </Box>
             </Box>
 
-            {/* Action Section */}
             <Box
               sx={{
                 display: "flex",
@@ -347,7 +414,7 @@ export default function SalesDashboard() {
               },
             }}
           >
-            <Tab label={`Live Operations (${pendingOrdersQueue.length})`} />
+            <Tab label={`Live Operations (${livePendingOrders.length})`} />
             <Tab label="Sales Analytics" />
             <Tab label="Menu Performance" />
             <Tab label="Menu Management" />
@@ -357,92 +424,93 @@ export default function SalesDashboard() {
 
       {/* --- CONTENT AREA --- */}
       <Container maxWidth="xl" sx={{ mt: 4, mb: 10 }}>
-        {/* QUICK FILTERS */}
+        {/* Reporting Period - visible on Live Operations + Analytics */}
         {activeTab !== 3 && (
-        <Paper
-          elevation={0}
-          sx={{
-            p: 2,
-            mb: 4,
-            borderRadius: 2,
-            border: "1px solid #e5e7eb",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            flexWrap: "wrap",
-            gap: 2,
-          }}
-        >
-          <Box display="flex" alignItems="center" gap={2}>
-            <CalendarMonthIcon sx={{ color: "#64748b" }} />
-            <Typography
-              variant="body1"
-              sx={{ fontWeight: "bold", color: "#1e293b" }}
-            >
-              Reporting Period
-            </Typography>
-          </Box>
+          <Paper
+            elevation={0}
+            sx={{
+              p: 2,
+              mb: 4,
+              borderRadius: 2,
+              border: "1px solid #e5e7eb",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: 2,
+            }}
+          >
+            <Box display="flex" alignItems="center" gap={2}>
+              <CalendarMonthIcon sx={{ color: "#64748b" }} />
+              <Typography
+                variant="body1"
+                sx={{ fontWeight: "bold", color: "#1e293b" }}
+              >
+                Reporting Period
+              </Typography>
+            </Box>
 
-          <Box display="flex" gap={2} alignItems="center">
-            <ToggleButtonGroup
-              color="primary"
-              value={datePreset}
-              exclusive
-              onChange={(e, newPreset) => {
-                setLoading(true);
-                if (newPreset !== null) setDatePreset(newPreset);
-              }}
-              size="small"
-              sx={{ bgcolor: "white" }}
-            >
-              <ToggleButton
-                value="today"
-                sx={{ fontWeight: "bold", px: 3, textTransform: "none" }}
+            <Box display="flex" gap={2} alignItems="center">
+              <ToggleButtonGroup
+                color="primary"
+                value={datePreset}
+                exclusive
+                onChange={(e, newPreset) => {
+                  setLoading(true);
+                  if (newPreset !== null) setDatePreset(newPreset);
+                }}
+                size="small"
+                sx={{ bgcolor: "white" }}
               >
-                Today
-              </ToggleButton>
-              <ToggleButton
-                value="yesterday"
-                sx={{ fontWeight: "bold", px: 3, textTransform: "none" }}
-              >
-                Yesterday
-              </ToggleButton>
-              <ToggleButton
-                value="7days"
-                sx={{ fontWeight: "bold", px: 3, textTransform: "none" }}
-              >
-                Last 7 Days
-              </ToggleButton>
-              <ToggleButton
-                value="custom"
-                sx={{ fontWeight: "bold", px: 3, textTransform: "none" }}
-              >
-                Custom Range
-              </ToggleButton>
-            </ToggleButtonGroup>
+                <ToggleButton
+                  value="today"
+                  sx={{ fontWeight: "bold", px: 3, textTransform: "none" }}
+                >
+                  Today
+                </ToggleButton>
+                <ToggleButton
+                  value="yesterday"
+                  sx={{ fontWeight: "bold", px: 3, textTransform: "none" }}
+                >
+                  Yesterday
+                </ToggleButton>
+                <ToggleButton
+                  value="7days"
+                  sx={{ fontWeight: "bold", px: 3, textTransform: "none" }}
+                >
+                  Last 7 Days
+                </ToggleButton>
+                <ToggleButton
+                  value="custom"
+                  sx={{ fontWeight: "bold", px: 3, textTransform: "none" }}
+                >
+                  Custom Range
+                </ToggleButton>
+              </ToggleButtonGroup>
 
-            {datePreset === "custom" && (
-              <Box display="flex" gap={1}>
-                <TextField
-                  type="date"
-                  size="small"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  sx={{ bgcolor: "white", width: 140 }}
-                />
-                <TextField
-                  type="date"
-                  size="small"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  sx={{ bgcolor: "white", width: 140 }}
-                />
-              </Box>
-            )}
-          </Box>
-        </Paper>
+              {datePreset === "custom" && (
+                <Box display="flex" gap={1}>
+                  <TextField
+                    type="date"
+                    size="small"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    sx={{ bgcolor: "white", width: 140 }}
+                  />
+                  <TextField
+                    type="date"
+                    size="small"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    sx={{ bgcolor: "white", width: 140 }}
+                  />
+                </Box>
+              )}
+            </Box>
+          </Paper>
         )}
-        {loading ? (
+
+        {loading && activeTab !== 0 ? (
           <Box
             display="flex"
             justifyContent="center"
@@ -455,8 +523,8 @@ export default function SalesDashboard() {
           <Box>
             {activeTab === 0 && (
               <LiveOperationsTab
-                pendingOrders={pendingOrdersQueue}
-                completedOrders={completedOrdersQueue}
+                pendingOrders={livePendingOrders}
+                completedOrders={liveCompletedOrders}
                 onMarkComplete={handleMarkAsCompleted}
               />
             )}
