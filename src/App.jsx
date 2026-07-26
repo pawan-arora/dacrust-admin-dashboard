@@ -4,6 +4,7 @@ import CssBaseline from "@mui/material/CssBaseline";
 import { theme } from "./theme";
 
 import Login from "./pages/Login";
+import ChangePassword from "./pages/ChangePassword";
 import SalesDashboard from "./pages/SalesDashboard";
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -14,10 +15,9 @@ function App() {
 
       <BrowserRouter>
         <Routes>
-          {/* Login Page */}
           <Route path="/login" element={<Login />} />
+          <Route path="/change-password" element={<ChangePassword />} />
 
-          {/* Protected Dashboard */}
           <Route
             path="/"
             element={
@@ -27,7 +27,6 @@ function App() {
             }
           />
 
-          {/* Redirect any unknown route */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
+import { onAuthStateChanged } from "firebase/auth";
+
 import {
   collection,
   query,
@@ -9,8 +11,9 @@ import {
   getDocs,
   orderBy,
   limit,
+  getDoc,
 } from "firebase/firestore";
-import { db } from "../firebase";
+import { auth, db } from "../firebase";
 import {
   Box,
   Typography,
@@ -49,7 +52,7 @@ export default function SalesDashboard() {
     name: "Loading...",
     logo: "",
   });
-  const [adminUser] = useState("Pawan Arora");
+  const [adminUser, setAdminUser] = useState("Loading...");
 
   const [datePreset, setDatePreset] = useState("today");
   const [startDate, setStartDate] = useState(() => {
@@ -81,6 +84,26 @@ export default function SalesDashboard() {
     navigate("/login");
   };
 
+  // Load logged-in admin name
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        try {
+          const adminDoc = await getDoc(doc(db, "admin", user.uid));
+          if (adminDoc.exists()) {
+            setAdminUser(adminDoc.data().name || "Admin");
+          } else {
+            setAdminUser("Admin");
+          }
+        } catch (error) {
+          console.error("Error fetching admin data:", error);
+          setAdminUser("Admin");
+        }
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
   // 1. Fetch static restaurant info once
   useEffect(() => {
     const fetchRestInfo = async () => {

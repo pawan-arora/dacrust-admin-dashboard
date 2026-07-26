@@ -1,5 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
+import { auth, db } from "../firebase";
 import {
   Box,
   Paper,
@@ -8,23 +11,61 @@ import {
   Button,
   Avatar,
   CircularProgress,
+  Alert,
 } from "@mui/material";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
-import pizzaBg from "../assets/background_pizza.png"; // optional
+import pizzaBg from "../assets/background_pizza.png";
 
 export default function Login() {
   const navigate = useNavigate();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
+    if (!email || !password) {
+      setError("Please enter email and password");
+      return;
+    }
+
     setLoading(true);
+    setError("");
 
-    // Temporary fake login (no real authentication yet)
-    setTimeout(() => {
-      localStorage.setItem("isLoggedIn", "true");
+    try {
+      // 1. Login with Firebase Auth
+      const userCredential = await signInWithEmailAndPassword(
+        auth,
+        email,
+        password
+      );
+      const user = userCredential.user;
+
+      // 2. Check if user must change password
+      const adminDoc = await getDoc(doc(db, "admin", user.uid));
+
+      if (adminDoc.exists() && adminDoc.data().mustChangePassword === true) {
+        // Force password change
+        navigate("/change-password");
+      } else {
+        // Normal login
+        localStorage.setItem("isLoggedIn", "true");
+        navigate("/");
+      }
+    } catch (err) {
+      console.error(err);
+      if (
+        err.code === "auth/invalid-credential" ||
+        err.code === "auth/wrong-password" ||
+        err.code === "auth/user-not-found"
+      ) {
+        setError("Invalid email or password");
+      } else {
+        setError("Login failed. Please try again.");
+      }
+    } finally {
       setLoading(false);
-      navigate("/"); // Redirect to dashboard
-    }, 800);
+    }
   };
 
   return (
@@ -70,10 +111,17 @@ export default function Login() {
           Da Crust Management Console
         </Typography>
 
+        {error && (
+          <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }}>
+            {error}
+          </Alert>
+        )}
+
         <TextField
           fullWidth
           label="Email"
-          defaultValue="admin@dacrust.co.nz"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
           sx={{ mb: 2.5 }}
           InputProps={{ sx: { borderRadius: 2 } }}
         />
@@ -82,9 +130,11 @@ export default function Login() {
           fullWidth
           label="Password"
           type="password"
-          defaultValue="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
           sx={{ mb: 4 }}
           InputProps={{ sx: { borderRadius: 2 } }}
+          onKeyDown={(e) => e.key === "Enter" && handleLogin()}
         />
 
         <Button
@@ -103,11 +153,7 @@ export default function Login() {
             "&:hover": { bgcolor: "#c2410c" },
           }}
         >
-          {loading ? (
-            <CircularProgress size={24} color="inherit" />
-          ) : (
-            "Login"
-          )}
+          {loading ? <CircularProgress size={24} color="inherit" /> : "Login"}
         </Button>
       </Paper>
     </Box>
