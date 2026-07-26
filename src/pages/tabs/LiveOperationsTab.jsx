@@ -13,7 +13,7 @@ import {
   TableContainer,
 } from "@mui/material";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
-import OrderDetailsModal from "./OrderDetailsModal";
+import OrderDetailsModal from "../../components/OrderDetailsModal";
 
 // ==========================================
 // COMPONENT 1: ACTIVE STREAMING GRID

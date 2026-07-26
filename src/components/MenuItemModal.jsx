@@ -192,64 +192,97 @@ export default function MenuItemModal({
             />
           </Paper>
 
-          {/* ✅ FULL IMAGE UPLOAD SECTION (Fixes unused variable errors) */}
-          <Box
-            sx={{
-              border: "2px dashed #cbd5e1",
-              borderRadius: 3,
-              p: 4,
-              textAlign: "center",
-              bgcolor: "#f8fafc",
-              transition: "all 0.2s",
-              "&:hover": { borderColor: "#94a3b8", bgcolor: "#f1f5f9" },
-            }}
-          >
-            <input
-              accept="image/jpeg, image/png"
-              style={{ display: "none" }}
-              id="raised-button-file"
-              type="file"
-              onChange={handleImageChange}
-            />
-            <label htmlFor="raised-button-file">
-              <Button
-                variant="outlined"
-                component="span"
-                startIcon={<CloudUploadIcon />}
-                sx={{
-                  borderRadius: 2,
-                  textTransform: "none",
-                  fontWeight: "bold",
-                  color: "#0f172a",
-                  borderColor: "#cbd5e1",
-                }}
-              >
-                Upload Image
-              </Button>
-            </label>
+          {/* ✅ Improved Image Upload Section */}
+<Box
+  sx={{
+    border: "2px dashed #cbd5e1",
+    borderRadius: 3,
+    p: 3,
+    textAlign: "center",
+    bgcolor: "#f8fafc",
+    transition: "all 0.2s",
+    "&:hover": { borderColor: "#94a3b8", bgcolor: "#f1f5f9" },
+  }}
+>
+  <input
+    accept="image/*"
+    style={{ display: "none" }}
+    id="raised-button-file"
+    type="file"
+    onChange={handleImageChange}
+  />
 
-            {imageFile && (
-              <Typography
-                variant="caption"
-                display="block"
-                mt={2}
-                fontWeight="bold"
-                color="#10b981"
-              >
-                {imageFile.name} selected
-              </Typography>
-            )}
+  <label htmlFor="raised-button-file">
+    <Button
+      variant="outlined"
+      component="span"
+      startIcon={<CloudUploadIcon />}
+      disabled={uploadingImage}
+      sx={{
+        borderRadius: 2,
+        textTransform: "none",
+        fontWeight: "bold",
+        color: "#0f172a",
+        borderColor: "#cbd5e1",
+      }}
+    >
+      {uploadingImage ? "Uploading..." : "Upload Image"}
+    </Button>
+  </label>
 
-            {!imageFile && formData.imagePath && (
-              <Box sx={{ mt: 3, display: "flex", justifyContent: "center" }}>
-                <Avatar
-                  src={formData.imagePath}
-                  variant="rounded"
-                  sx={{ width: 80, height: 80, borderRadius: 2, boxShadow: 1 }}
-                />
-              </Box>
-            )}
-          </Box>
+  {/* Show newly selected image preview */}
+  {imageFile && (
+    <Box sx={{ mt: 2.5 }}>
+      <Avatar
+        src={URL.createObjectURL(imageFile)}
+        variant="rounded"
+        sx={{
+          width: 100,
+          height: 100,
+          mx: "auto",
+          borderRadius: 2,
+          boxShadow: 2,
+          border: "2px solid #e2e8f0",
+        }}
+      />
+      <Typography
+        variant="caption"
+        display="block"
+        mt={1.5}
+        fontWeight="bold"
+        color="#10b981"
+      >
+        {imageFile.name}
+      </Typography>
+    </Box>
+  )}
+
+  {/* Show existing image when editing (and no new file selected) */}
+  {!imageFile && formData.imagePath && (
+    <Box sx={{ mt: 2.5 }}>
+      <Avatar
+        src={formData.imagePath}
+        variant="rounded"
+        sx={{
+          width: 100,
+          height: 100,
+          mx: "auto",
+          borderRadius: 2,
+          boxShadow: 2,
+          border: "2px solid #e2e8f0",
+        }}
+      />
+      <Typography
+        variant="caption"
+        display="block"
+        mt={1.5}
+        color="text.secondary"
+      >
+        Current image
+      </Typography>
+    </Box>
+  )}
+</Box>
         </Box>
       </DialogContent>
 

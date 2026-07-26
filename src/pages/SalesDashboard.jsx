@@ -29,6 +29,7 @@ import {
 } from "@mui/material";
 import LogoutIcon from "@mui/icons-material/Logout";
 import CalendarMonthIcon from "@mui/icons-material/CalendarMonth";
+import { useNavigate } from "react-router-dom";
 
 import pizzaBg from "../assets/background_pizza.png";
 
@@ -36,9 +37,12 @@ import LiveOperationsTab from "./tabs/LiveOperationsTab";
 import SalesAnalyticsTab from "./tabs/SalesAnalyticsTab";
 import MenuPerformanceTab from "./tabs/MenuPerformanceTab";
 import MenuManagementTab from "./tabs/MenuManagementTab";
+import RestaurantSettingsTab from "./tabs/RestaurantSettingsTab";
 import { getNZDateString } from "../utils/dateUtils";
 
 export default function SalesDashboard() {
+  const navigate = useNavigate();
+
   const [activeTab, setActiveTab] = useState(0);
 
   const [restaurantInfo, setRestaurantInfo] = useState({
@@ -57,7 +61,7 @@ export default function SalesDashboard() {
   );
   const [topItemsLimit, setTopItemsLimit] = useState(5);
 
-  // Analytics data (based on createdAt + selected period)
+  // Analytics data
   const [, setAllOrders] = useState([]);
   const [totalSales, setTotalSales] = useState(0);
   const [premiumCustomers, setPremiumCustomers] = useState([]);
@@ -65,11 +69,17 @@ export default function SalesDashboard() {
   const [topProducts, setTopProducts] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Live Kitchen data (based on scheduledTimeEpoch + selected period)
+  // Live Kitchen data
   const [livePendingOrders, setLivePendingOrders] = useState([]);
   const [liveCompletedOrders, setLiveCompletedOrders] = useState([]);
 
   const [scrollY, setScrollY] = useState(0);
+
+  // Logout handler
+  const handleLogout = () => {
+    localStorage.removeItem("isLoggedIn");
+    navigate("/login");
+  };
 
   // 1. Fetch static restaurant info once
   useEffect(() => {
@@ -88,7 +98,7 @@ export default function SalesDashboard() {
   }, []);
 
   // ==========================================
-  // ANALYTICS DATA (respects Reporting Period - based on createdAt)
+  // ANALYTICS DATA
   // ==========================================
   const fetchDashboardData = useCallback(() => {
     let start = new Date();
@@ -192,10 +202,9 @@ export default function SalesDashboard() {
   }, [datePreset, startDate, endDate]);
 
   // ==========================================
-  // LIVE KITCHEN QUEUE (based on EXPECTED date + selected period)
+  // LIVE KITCHEN QUEUE
   // ==========================================
   useEffect(() => {
-    // Fetch a wider window so advance/past scheduled orders are available
     const fromDate = new Date();
     fromDate.setDate(fromDate.getDate() - 45);
     fromDate.setHours(0, 0, 0, 0);
@@ -205,11 +214,10 @@ export default function SalesDashboard() {
       ordersRef,
       where("createdAt", ">=", fromDate),
       orderBy("createdAt", "desc"),
-      limit(500)
+      limit(500),
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      // Calculate the selected period range
       let periodStart = new Date();
       let periodEnd = new Date();
 
@@ -243,7 +251,6 @@ export default function SalesDashboard() {
 
         const scheduledDate = new Date(scheduledEpoch);
 
-        // Only include orders whose EXPECTED date falls inside the selected period
         if (scheduledDate < periodStart || scheduledDate > periodEnd) return;
 
         if (order.status === "PAID") {
@@ -253,9 +260,12 @@ export default function SalesDashboard() {
         }
       });
 
-      // Sort by expected time
-      pending.sort((a, b) => (a.scheduledTimeEpoch || 0) - (b.scheduledTimeEpoch || 0));
-      completed.sort((a, b) => (b.scheduledTimeEpoch || 0) - (a.scheduledTimeEpoch || 0));
+      pending.sort(
+        (a, b) => (a.scheduledTimeEpoch || 0) - (b.scheduledTimeEpoch || 0),
+      );
+      completed.sort(
+        (a, b) => (b.scheduledTimeEpoch || 0) - (a.scheduledTimeEpoch || 0),
+      );
 
       setLivePendingOrders(pending);
       setLiveCompletedOrders(completed);
@@ -370,10 +380,13 @@ export default function SalesDashboard() {
                   Administrator
                 </Typography>
               </Box>
+
+              {/* Logout Button */}
               <Button
                 variant="contained"
                 color="error"
                 endIcon={<LogoutIcon />}
+                onClick={handleLogout}
                 sx={{
                   borderRadius: "8px",
                   textTransform: "none",
@@ -418,14 +431,14 @@ export default function SalesDashboard() {
             <Tab label="Sales Analytics" />
             <Tab label="Menu Performance" />
             <Tab label="Menu Management" />
+            <Tab label="Restaurant Settings" />
           </Tabs>
         </Container>
       </AppBar>
 
       {/* --- CONTENT AREA --- */}
       <Container maxWidth="xl" sx={{ mt: 4, mb: 10 }}>
-        {/* Reporting Period - visible on Live Operations + Analytics */}
-        {activeTab !== 3 && (
+        {activeTab !== 3 && activeTab !== 4 && (
           <Paper
             elevation={0}
             sx={{
@@ -543,6 +556,7 @@ export default function SalesDashboard() {
               />
             )}
             {activeTab === 3 && <MenuManagementTab />}
+            {activeTab === 4 && <RestaurantSettingsTab />}
           </Box>
         )}
       </Container>
