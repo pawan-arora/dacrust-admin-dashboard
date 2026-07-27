@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import {
   Box,
   Paper,
@@ -12,12 +12,27 @@ import {
   CircularProgress,
   Card,
   Chip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  DialogContentText,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import EditIcon from "@mui/icons-material/Edit";
+import DeleteIcon from "@mui/icons-material/Delete";
 import RestaurantMenuIcon from "@mui/icons-material/RestaurantMenu";
 import MenuItemModal from "../../components/MenuItemModal";
-import { collection, getDocs, doc, updateDoc } from "firebase/firestore";
+import AddCategoryModal from "../../components/AddCategoryModal";
+import {
+  collection,
+  getDocs,
+  doc,
+  updateDoc,
+  addDoc,
+  deleteDoc,
+  setDoc,
+} from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { db, storage } from "../../firebase";
 
@@ -26,12 +41,12 @@ export default function MenuManagementTab() {
   const [menuData, setMenuData] = useState({});
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0); // used to trigger reload
 
+  // Menu Item Modal
   const [openModal, setOpenModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [uploadingImage, setUploadingImage] = useState(false);
-
-  // ✅ Expanded formData to support discounts and sizes
   const [formData, setFormData] = useState({
     name: "",
     description: "",
@@ -44,37 +59,57 @@ export default function MenuManagementTab() {
   });
   const [imageFile, setImageFile] = useState(null);
 
-  const fetchMenuData = useCallback(async () => {
-    try {
-      const catSnap = await getDocs(collection(db, "categories"));
-      const catList = catSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      catList.sort((a, b) => a.sortOrder - b.sortOrder);
-      setCategories(catList);
+  // Category Modal
+  const [openCategoryModal, setOpenCategoryModal] = useState(false);
+  const [categoryName, setCategoryName] = useState("");
+  const [savingCategory, setSavingCategory] = useState(false);
+  const [editingCategory, setEditingCategory] = useState(null);
+  const [isActive, setIsActive] = useState(true);
 
-      const menuSnap = await getDocs(collection(db, "menu"));
-      const menuObj = {};
-      menuSnap.docs.forEach((doc) => {
-        menuObj[doc.id] = doc.data();
-      });
-      setMenuData(menuObj);
+  // Delete Category Confirmation
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [categoryToDelete, setCategoryToDelete] = useState(null);
 
-      if (catList.length > 0) {
-        setSelectedCategory((prev) => (prev ? prev : catList[0].id.toLowerCase()));
-      }
-    } catch (error) {
-      console.error("Error fetching menu:", error);
-    }
-    setLoading(false);
-  }, []);
-
+  // ========== LOAD DATA ==========
   useEffect(() => {
-    const initializeMenu = async () => {
-      await fetchMenuData();
-    };
-    initializeMenu();
-  }, [fetchMenuData]);
+    const loadMenuData = async () => {
+      try {
+        setLoading(true);
 
-  // ✅ Fixed handleOpenModal - proper type handling + more fields
+        const catSnap = await getDocs(collection(db, "categories"));
+        const catList = catSnap.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        catList.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+        setCategories(catList);
+
+        const menuSnap = await getDocs(collection(db, "menu"));
+        const menuObj = {};
+        menuSnap.docs.forEach((doc) => {
+          menuObj[doc.id] = doc.data();
+        });
+        setMenuData(menuObj);
+
+        if (catList.length > 0) {
+          setSelectedCategory((prev) =>
+            prev ? prev : catList[0].name.toLowerCase()
+          );
+        }
+      } catch (error) {
+        console.error("Error fetching menu:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadMenuData();
+  }, [refreshKey]);
+
+  // Helper to refresh data
+  const refreshData = () => setRefreshKey((prev) => prev + 1);
+
+  // ========== MENU ITEM FUNCTIONS ==========
   const handleOpenModal = (item = null) => {
     if (item) {
       setEditingItem(item);
@@ -82,7 +117,8 @@ export default function MenuManagementTab() {
         name: item.name || "",
         description: item.description || "",
         price: item.price != null ? String(item.price) : "",
-        originalPrice: item.originalPrice != null ? String(item.originalPrice) : "",
+        originalPrice:
+          item.originalPrice != null ? String(item.originalPrice) : "",
         imagePath: item.imagePath || "",
         isAvailable: item.isAvailable ?? true,
         isDiscounted: item.isDiscounted ?? false,
@@ -116,9 +152,8 @@ export default function MenuManagementTab() {
     }
   };
 
-  // ✅ Improved save logic - respects size-based items and discounts
   const handleSaveItem = async () => {
-    if (!formData.name) return;
+    if (!formData.name || !selectedCategory) return;
 
     setUploadingImage(true);
     let finalImageUrl = formData.imagePath;
@@ -131,7 +166,6 @@ export default function MenuManagementTab() {
         finalImageUrl = await getDownloadURL(storageRef);
       }
 
-      // Start with existing item data to preserve sizes, dishType, spiceLevels, etc.
       const newItemData = {
         ...editingItem,
         name: formData.name,
@@ -144,17 +178,13 @@ export default function MenuManagementTab() {
           formData.name.toLowerCase().replace(/\s+/g, "_"),
       };
 
-      // Only set price if user entered a value (for simple items)
       if (formData.price !== "") {
         newItemData.price = Number(formData.price);
       }
-      // If price field is empty, we keep whatever was there (sizes-based items)
 
-      // Handle originalPrice for discounted items
       if (formData.originalPrice !== "") {
         newItemData.originalPrice = Number(formData.originalPrice);
       } else if (newItemData.originalPrice && !formData.isDiscounted) {
-        // Optional: remove originalPrice if discount is turned off
         delete newItemData.originalPrice;
       }
 
@@ -176,7 +206,7 @@ export default function MenuManagementTab() {
 
       await updateDoc(categoryDocRef, { variants: updatedVariants });
 
-      fetchMenuData();
+      refreshData();
       handleCloseModal();
     } catch (error) {
       console.error("Error saving menu item:", error);
@@ -184,13 +214,80 @@ export default function MenuManagementTab() {
     setUploadingImage(false);
   };
 
+  // ========== CATEGORY FUNCTIONS ==========
+  const handleSaveCategory = async () => {
+    if (!categoryName.trim()) return;
+
+    setSavingCategory(true);
+    try {
+      const cleanName = categoryName.trim();
+      const docId = cleanName.toLowerCase().replace(/\s+/g, "_");
+
+      if (editingCategory) {
+        // Edit existing category
+        await updateDoc(doc(db, "categories", editingCategory.id), {
+          name: cleanName,
+          isActive: isActive,
+        });
+      } else {
+        // Add new category
+        const newSortOrder = categories.length + 1;
+
+        await addDoc(collection(db, "categories"), {
+          name: cleanName,
+          sortOrder: newSortOrder,
+          isActive: isActive,
+        });
+
+        // Create matching document in menu collection
+        await setDoc(doc(db, "menu", docId), {
+          variants: [],
+        });
+      }
+
+      setCategoryName("");
+      setIsActive(true);
+      setEditingCategory(null);
+      setOpenCategoryModal(false);
+      refreshData();
+    } catch (error) {
+      console.error("Error saving category:", error);
+    }
+    setSavingCategory(false);
+  };
+
+  const handleEditCategory = (cat) => {
+    setEditingCategory(cat);
+    setCategoryName(cat.name);
+    setIsActive(cat.isActive ?? true);
+    setOpenCategoryModal(true);
+  };
+
+  const handleDeleteCategory = async () => {
+    if (!categoryToDelete) return;
+
+    try {
+      await deleteDoc(doc(db, "categories", categoryToDelete.id));
+
+      setDeleteDialogOpen(false);
+      setCategoryToDelete(null);
+
+      if (selectedCategory === categoryToDelete.name.toLowerCase()) {
+        setSelectedCategory(null);
+      }
+
+      refreshData();
+    } catch (error) {
+      console.error("Error deleting category:", error);
+    }
+  };
+
   const currentCategoryData =
     menuData[selectedCategory?.toLowerCase()]?.variants || [];
 
-   return (
+  return (
     <Box sx={{ flexGrow: 1, textAlign: "left" }}>
-      
-      {/* HEADER SECTION */}
+      {/* HEADER */}
       <Box
         sx={{
           display: "flex",
@@ -204,11 +301,7 @@ export default function MenuManagementTab() {
         <Box>
           <Typography
             variant="h5"
-            sx={{
-              fontWeight: "800",
-              color: "#0f172a",
-              letterSpacing: "-0.5px",
-            }}
+            sx={{ fontWeight: 800, color: "#0f172a", letterSpacing: "-0.5px" }}
           >
             Menu Catalog
           </Typography>
@@ -220,19 +313,24 @@ export default function MenuManagementTab() {
           variant="contained"
           color="primary"
           startIcon={<AddIcon />}
+          onClick={() => {
+            setEditingCategory(null);
+            setCategoryName("");
+            setIsActive(true);
+            setOpenCategoryModal(true);
+          }}
           sx={{
             borderRadius: 2,
             fontWeight: "bold",
             textTransform: "none",
             boxShadow: "none",
-            "&:hover": { boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)" },
           }}
         >
           New Category
         </Button>
       </Box>
 
-      {/* CORE LAYOUT */}
+      {/* MAIN LAYOUT */}
       <Box
         sx={{
           display: "flex",
@@ -241,7 +339,7 @@ export default function MenuManagementTab() {
           alignItems: "flex-start",
         }}
       >
-        {/* LEFT COLUMN: Sidebar */}
+        {/* SIDEBAR - Categories */}
         <Box sx={{ width: { xs: "100%", md: "250px" }, flexShrink: 0 }}>
           <Paper
             elevation={0}
@@ -249,7 +347,6 @@ export default function MenuManagementTab() {
               p: 2,
               borderRadius: 3,
               border: "1px solid #e2e8f0",
-              bgcolor: "#ffffff",
             }}
           >
             <Typography
@@ -266,20 +363,31 @@ export default function MenuManagementTab() {
             >
               Categories
             </Typography>
-            <List disablePadding sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+            <List
+              disablePadding
+              sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}
+            >
               {categories.map((cat) => {
-                const isSelected = selectedCategory === cat.name.toLowerCase();
+                const isSelected =
+                  selectedCategory === cat.name.toLowerCase();
                 return (
                   <ListItemButton
                     key={cat.id}
                     selected={isSelected}
-                    onClick={() => setSelectedCategory(cat.name.toLowerCase())}
+                    onClick={() =>
+                      setSelectedCategory(cat.name.toLowerCase())
+                    }
                     sx={{
                       borderRadius: 2,
                       py: 1.2,
-                      "&.Mui-selected": { bgcolor: "#f1f5f9", color: "#0f172a" },
-                      "&:hover": { bgcolor: isSelected ? "#f1f5f9" : "#f8fafc" },
+                      pr: 1,
+                      "&.Mui-selected": {
+                        bgcolor: "#f1f5f9",
+                        color: "#0f172a",
+                      },
                       color: "#64748b",
+                      display: "flex",
+                      justifyContent: "space-between",
                     }}
                   >
                     <ListItemText
@@ -287,8 +395,32 @@ export default function MenuManagementTab() {
                       primaryTypographyProps={{
                         fontWeight: isSelected ? 800 : 600,
                         fontSize: "0.95rem",
+                        color: cat.isActive === false ? "#94a3b8" : "inherit",
+                        fontStyle:
+                          cat.isActive === false ? "italic" : "normal",
                       }}
                     />
+                    <Box
+                      sx={{ display: "flex", gap: 0.5 }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <IconButton
+                        size="small"
+                        onClick={() => handleEditCategory(cat)}
+                      >
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          setCategoryToDelete(cat);
+                          setDeleteDialogOpen(true);
+                        }}
+                        sx={{ color: "#ef4444" }}
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
                   </ListItemButton>
                 );
               })}
@@ -296,15 +428,14 @@ export default function MenuManagementTab() {
           </Paper>
         </Box>
 
-        {/* 🌟 RIGHT COLUMN: Fixed Height with Internal Scroll */}
+        {/* RIGHT SIDE - Items */}
         <Box
           sx={{
             flexGrow: 1,
             minWidth: 0,
             display: "flex",
             flexDirection: "column",
-            // Restrict the right side to the height of the screen minus the header space
-            height: "calc(100vh - 250px)", 
+            height: "calc(100vh - 250px)",
           }}
         >
           {loading ? (
@@ -313,14 +444,12 @@ export default function MenuManagementTab() {
             </Box>
           ) : (
             <>
-              {/* FIXED CATEGORY HEADER: Stays at the top while cards scroll below */}
               <Box
                 sx={{
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "center",
                   mb: 3,
-                  flexShrink: 0, // Prevents the header from squishing
                 }}
               >
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
@@ -335,7 +464,9 @@ export default function MenuManagementTab() {
                       height: 40,
                     }}
                   >
-                    <RestaurantMenuIcon sx={{ color: "#3b82f6", fontSize: 22 }} />
+                    <RestaurantMenuIcon
+                      sx={{ color: "#3b82f6", fontSize: 22 }}
+                    />
                   </Box>
                   <Typography
                     variant="h6"
@@ -345,52 +476,31 @@ export default function MenuManagementTab() {
                       textTransform: "capitalize",
                     }}
                   >
-                    {selectedCategory}
+                    {selectedCategory || "Select a category"}
                   </Typography>
                 </Box>
                 <Button
                   variant="outlined"
                   startIcon={<AddIcon />}
                   onClick={() => handleOpenModal()}
+                  disabled={!selectedCategory}
                   sx={{
                     borderRadius: 2,
                     fontWeight: "bold",
                     textTransform: "none",
                     borderWidth: "2px",
-                    color: "#0f172a",
-                    borderColor: "#e2e8f0",
-                    "&:hover": {
-                      borderWidth: "2px",
-                      borderColor: "#cbd5e1",
-                      bgcolor: "#f8fafc",
-                    },
                   }}
                 >
                   Add Item
                 </Button>
               </Box>
 
-              {/* 🌟 SCROLLABLE CARDS CONTAINER */}
               <Box
                 sx={{
                   flexGrow: 1,
-                  overflowY: "auto", // Enables vertical scrolling
-                  pr: 1.5, // Padding on the right so the scrollbar doesn't touch the cards
+                  overflowY: "auto",
+                  pr: 1.5,
                   pb: 4,
-                  // Custom, sleek scrollbar styling
-                  "&::-webkit-scrollbar": {
-                    width: "6px",
-                  },
-                  "&::-webkit-scrollbar-track": {
-                    background: "transparent",
-                  },
-                  "&::-webkit-scrollbar-thumb": {
-                    background: "#cbd5e1",
-                    borderRadius: "10px",
-                  },
-                  "&::-webkit-scrollbar-thumb:hover": {
-                    background: "#94a3b8",
-                  },
                 }}
               >
                 {currentCategoryData.length === 0 ? (
@@ -404,7 +514,7 @@ export default function MenuManagementTab() {
                       bgcolor: "#f8fafc",
                     }}
                   >
-                    <Typography variant="body1" color="#64748b" fontWeight="500">
+                    <Typography color="#64748b">
                       No items found in this category.
                     </Typography>
                   </Paper>
@@ -420,39 +530,30 @@ export default function MenuManagementTab() {
                         mb: 2,
                         display: "flex",
                         gap: 3,
-                        alignItems: "flex-start",
-                        transition: "all 0.2s ease-in-out",
-                        "&:hover": {
-                          borderColor: "#cbd5e1",
-                          boxShadow:
-                            "0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05)",
-                        },
                       }}
                     >
                       <Avatar
                         variant="rounded"
                         src={item.imagePath}
-                        sx={{
-                          width: 100,
-                          height: 100,
-                          borderRadius: 2,
-                          boxShadow: "0 2px 4px rgb(0 0 0 / 0.1)",
-                          bgcolor: "#f1f5f9",
-                          mt: 0.5,
-                        }}
+                        sx={{ width: 100, height: 100, borderRadius: 2 }}
                       >
-                        <RestaurantMenuIcon sx={{ color: "#cbd5e1", fontSize: 40 }} />
+                        <RestaurantMenuIcon
+                          sx={{ color: "#cbd5e1", fontSize: 40 }}
+                        />
                       </Avatar>
 
                       <Box sx={{ flexGrow: 1 }}>
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 0.5 }}>
+                        <Box
+                          sx={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 1.5,
+                            mb: 0.5,
+                          }}
+                        >
                           <Typography
                             variant="h6"
-                            sx={{
-                              fontWeight: 800,
-                              color: "#0f172a",
-                              fontSize: "1.1rem",
-                            }}
+                            sx={{ fontWeight: 800, fontSize: "1.1rem" }}
                           >
                             {item.name}
                           </Typography>
@@ -461,53 +562,38 @@ export default function MenuManagementTab() {
                               label="Unavailable"
                               size="small"
                               color="error"
-                              sx={{
-                                height: 22,
-                                fontSize: "0.75rem",
-                                fontWeight: "bold",
-                              }}
                             />
                           )}
                         </Box>
 
                         <Typography
                           variant="body2"
-                          sx={{
-                            color: "#64748b",
-                            mb: 1.5,
-                            maxWidth: "90%",
-                            display: "-webkit-box",
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: "vertical",
-                            overflow: "hidden",
-                          }}
+                          sx={{ color: "#64748b", mb: 1.5 }}
                         >
                           {item.description}
                         </Typography>
 
-                        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", mt: 1 }}>
+                        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
                           {item.price ? (
                             <Chip
-                              label={`$${item.price.toFixed(2)}`}
+                              label={`$${Number(item.price).toFixed(2)}`}
                               size="small"
                               sx={{
                                 bgcolor: "#ecfdf5",
                                 color: "#047857",
                                 fontWeight: 700,
-                                borderRadius: 1.5,
                               }}
                             />
                           ) : item.sizes ? (
                             item.sizes.map((s) => (
                               <Chip
                                 key={s.name}
-                                label={`${s.name} $${s.price.toFixed(2)}`}
+                                label={`${s.name} $${Number(s.price).toFixed(2)}`}
                                 size="small"
                                 sx={{
                                   bgcolor: "#ecfdf5",
                                   color: "#047857",
                                   fontWeight: 700,
-                                  borderRadius: 1.5,
                                 }}
                               />
                             ))
@@ -515,20 +601,7 @@ export default function MenuManagementTab() {
                         </Box>
                       </Box>
 
-                      <IconButton
-                        onClick={() => handleOpenModal(item)}
-                        sx={{
-                          bgcolor: "#f8fafc",
-                          border: "1px solid #e2e8f0",
-                          color: "#64748b",
-                          mt: 0.5,
-                          "&:hover": {
-                            bgcolor: "#f1f5f9",
-                            color: "#0f172a",
-                            borderColor: "#cbd5e1",
-                          },
-                        }}
-                      >
+                      <IconButton onClick={() => handleOpenModal(item)}>
                         <EditIcon fontSize="small" />
                       </IconButton>
                     </Card>
@@ -540,7 +613,7 @@ export default function MenuManagementTab() {
         </Box>
       </Box>
 
-      {/* EDIT / ADD MODAL */}
+      {/* MODALS */}
       <MenuItemModal
         open={openModal}
         onClose={handleCloseModal}
@@ -553,6 +626,48 @@ export default function MenuManagementTab() {
         handleImageChange={handleImageChange}
         selectedCategory={selectedCategory}
       />
+
+      <AddCategoryModal
+        open={openCategoryModal}
+        onClose={() => {
+          setOpenCategoryModal(false);
+          setCategoryName("");
+          setIsActive(true);
+          setEditingCategory(null);
+        }}
+        onSave={handleSaveCategory}
+        categoryName={categoryName}
+        setCategoryName={setCategoryName}
+        isActive={isActive}
+        setIsActive={setIsActive}
+        saving={savingCategory}
+        isEditing={Boolean(editingCategory)}
+      />
+
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+        PaperProps={{ sx: { borderRadius: 3 } }}
+      >
+        <DialogTitle sx={{ fontWeight: 800 }}>Delete Category?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Are you sure you want to delete{" "}
+            <strong>{categoryToDelete?.name}</strong>? This action cannot be
+            undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions sx={{ p: 2.5 }}>
+          <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+          <Button
+            onClick={handleDeleteCategory}
+            color="error"
+            variant="contained"
+          >
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }
