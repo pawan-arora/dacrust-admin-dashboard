@@ -43,4 +43,8 @@ Thumbs.db
 *.sw?
 package-lock.json
 package.json
-package.json
+
+.env
+.env.development
+.env.production
+.env.local
